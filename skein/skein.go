@@ -7,20 +7,20 @@ import (
 type CtxtHeader struct {
 	hashBitLen uint
 	bCnt uint
-	T []uint64
+	T [2]uint64
 }
 
 type Skein1024 struct {
 	h CtxtHeader
-	X []uint64
-	b []byte
+	X [SKEIN1024_STATE_WORDS]uint64
+	b [SKEIN1024_BLOCK_BYTES]byte
 }
 
 func (s *Skein1024) Init(size uint) {
 	s.h.hashBitLen = size
 	switch size {
 	case 1024:
-		copy(s.X, SKEIN1024_IV_1024)
+		copy(s.X[:], SKEIN1024_IV_1024)
 		//TODO: prebuilds for other sizes.
 	default:
 		//Build the IV values
@@ -44,7 +44,7 @@ func (s *Skein1024) Update(msg []byte) {
 			if s.h.bCnt != SKEIN1024_BLOCK_BYTES {
 				panic("ASSERTION FAILURE")
 			}
-			s.ProcessBlock(s.b,1, SKEIN1024_BLOCK_BYTES)
+			s.ProcessBlock(s.b[:],1, SKEIN1024_BLOCK_BYTES)
 			s.h.bCnt = 0
 		}
 
@@ -72,34 +72,47 @@ func (s *Skein1024) Final(outp []byte) {
 			s.b[j] = 0
 		}
 	}
-	s.ProcessBlock(s.b,1,s.h.bCnt)
+	s.ProcessBlock(s.b[:],1,s.h.bCnt)
 
 	byteCnt = (s.h.hashBitLen + 7) >> 3
 
 	for j := 0; j < len(s.b); j++ {
 		s.b[j] = 0
 	}
-	copy(X, s.X)
+	copy(X, s.X[:])
 	for i := uint(0); i*SKEIN1024_BLOCK_BYTES < byteCnt; i++ {
-		binary.LittleEndian.PutUint64(s.b, uint64(i))
+		binary.LittleEndian.PutUint64(s.b[:], uint64(i))
 		s.h.T[0] = 0
-		s.h.T[1] = (1 << 62) | ((63 | (1 << 63)) <<  56) //THIS MIGHT BE WRONG
+		s.h.T[1] = (uint64(1) << 62 | uint64(63) << 56 | uint64(1) << 63)
 		s.h.bCnt=0
-		s.ProcessBlock(s.b,1,8)
+		s.ProcessBlock(s.b[:],1,8)
 		n = byteCnt - i*SKEIN1024_BLOCK_BYTES   /* number of output bytes left to go */
 		if n >= SKEIN1024_BLOCK_BYTES {
 			n = SKEIN1024_BLOCK_BYTES
 		}
-		copy(outp[i*SKEIN1024_BLOCK_BYTES:],s.X)
+		//copy(outp[i*SKEIN1024_BLOCK_BYTES:],s.X)
+		CopyInt64ToBytes(outp[i*SKEIN1024_BLOCK_BYTES:], s.X[:])
 		//Maybe unecessary?
 		//Skein_Show_Final(1024,&s.h,n,hashVal+i*SKEIN1024_BLOCK_BYTES)
-		copy(s.X,X)
+		copy(s.X[:],X)
+
+	}
+}
+
+func CopyInt64ToBytes(dest []byte, src []uint64) {
+	for i := 0; i < len(src); i++ {
+		binary.LittleEndian.PutUint64(dest[i * 8:], src[i])
+	}
+}
+
+func CopyBytesToInt64(dest []uint64, src []byte) {
+	for i := 0; i < len(dest); i++ {
+		dest[i] = binary.LittleEndian.Uint64(src[i*8:])
 	}
 }
 
 func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 	const WCNT = SKEIN1024_STATE_WORDS
-	const RCNT = (SKEIN1024_ROUNDS_TOTAL/8)
 
 	var kw [WCNT+4]uint64
 
@@ -112,7 +125,7 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 
 	//ASSERT blkCnt != 0
 	ts := kw //TEMPORARY, JUST TO MAKE TRANSLATING EASIER
-	ks := kw[4:]
+	ks := kw[3:]
 	ts[0] = s.h.T[0]
 	ts[1] = s.h.T[1]
 
@@ -120,8 +133,9 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 	if blkCnt == 0 {
 		blkCnt++
 	}
+
 	for ;blkCnt > 0; blkCnt-- {
-		ts[0] += byteCntAdd
+		ts[0] += uint64(byteCntAdd)
 
 		ks[0] = s.X[0]
 		ks[1] = s.X[1]
@@ -139,11 +153,12 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		ks[13] = s.X[13]
 		ks[14] = s.X[14]
 		ks[15] = s.X[15]
-		ks[16] = ks[0] ^ ks[1] ^ ks[2] ^ ks[3] ^ ks[4] ^ ks[5] ^ ks[6] ^ ks[7] ^ ks[8] ^ ks[9] ^ ks[10] ^ ks[11] ^ ks[12] ^ ks[13] ^ ks[14] ^ ks[15] ^ ((0xA9FC1A22) + (((u64b_t) (0x1BD11BDA)) << 32))
+		ks[16] = ks[0] ^ ks[1] ^ ks[2] ^ ks[3] ^ ks[4] ^ ks[5] ^ ks[6] ^ ks[7] ^ ks[8] ^ ks[9] ^ ks[10] ^ ks[11] ^ ks[12] ^ ks[13] ^ ks[14] ^ ks[15] ^ ((0xA9FC1A22) + (( uint64(0x1BD11BDA)) << 32))
 
 		ts[2] = ts[0] ^ ts[1]
 
-		copy(w, blk[:8*WCNT])
+		//copy(w[:], blk[:8*WCNT])
+		CopyBytesToInt64(w[:], blk[:8*WCNT])
 
 		X00    = w[ 0] + ks[ 0]                 /* do the first full key injection */
 		X01    = w[ 1] + ks[ 1]
@@ -2659,7 +2674,9 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		s.X[15] = X15 ^ w[15]
 
 		ts[1] &= ^(uint64( 1 ) << ((126) - 64))
-		blkPtr += ( 8*(16))
+
+		//blkPtr += ( 8*(16))
+		blk = blk[8*16:]
 
 	}
 
@@ -2668,9 +2685,6 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 
 }
 
-func WriteInt64OnByteArray(n uint64, arr []byte, index int) {
-	binary.LittleEndian.PutUvarint(arr[index:], n)
-}
 
 func Skein_Put64_LSB_First(dst []byte, src []uint64) {
 	//I think this function might be unnecessary...
