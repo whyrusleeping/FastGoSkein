@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"unsafe"
+	"fmt"
 )
 
 type CtxtHeader struct {
@@ -44,13 +45,13 @@ func (s *Skein1024) Update(msg []byte) {
 			if s.h.bCnt != SKEIN1024_BLOCK_BYTES {
 				panic("ASSERTION FAILURE")
 			}
-			s.ProcessBlock(s.b[:],1, SKEIN1024_BLOCK_BYTES)
+			s.ProcessBlock(s.b[:],make([]uint64, SKEIN1024_STATE_WORDS+4), 1, SKEIN1024_BLOCK_BYTES)
 			s.h.bCnt = 0
 		}
 
 		if uint(len(msg)) > SKEIN1024_BLOCK_BYTES {
 			n = uint(len(msg) - 1) / SKEIN1024_BLOCK_BYTES
-			s.ProcessBlock(msg,n,SKEIN1024_BLOCK_BYTES)
+			s.ProcessBlock(msg,make([]uint64, SKEIN1024_STATE_WORDS+4),n,SKEIN1024_BLOCK_BYTES)
 			msg = msg[n * SKEIN1024_BLOCK_BYTES:]
 		}
 		//ASSERT: ss.h.bCnt == 0
@@ -72,20 +73,20 @@ func (s *Skein1024) Final(outp []byte) {
 			s.b[j] = 0
 		}
 	}
-	s.ProcessBlock(s.b[:],1,s.h.bCnt)
+	kw := make([]uint64, SKEIN1024_STATE_WORDS+4)
+	s.ProcessBlock(s.b[:],kw,1,s.h.bCnt)
 
 	byteCnt = (s.h.hashBitLen + 7) >> 3
 
-	for j := 0; j < len(s.b); j++ {
-		s.b[j] = 0
-	}
+	for i, _ := range s.b {s.b[i] = 0}
 	copy(X, s.X[:])
 	for i := uint(0); i*SKEIN1024_BLOCK_BYTES < byteCnt; i++ {
 		binary.LittleEndian.PutUint64(s.b[:], uint64(i))
 		s.h.T[0] = 0
 		s.h.T[1] = (uint64(1) << 62 | uint64(63) << 56 | uint64(1) << 63)
 		s.h.bCnt=0
-		s.ProcessBlock(s.b[:],1,8)
+		//ZERO OUT KW ARRAY
+		s.ProcessBlock(s.b[:],kw,1,8)
 		n = byteCnt - i*SKEIN1024_BLOCK_BYTES   /* number of output bytes left to go */
 		if n >= SKEIN1024_BLOCK_BYTES {
 			n = SKEIN1024_BLOCK_BYTES
@@ -113,31 +114,29 @@ func CopyBytesToInt64(dest []uint64, src []byte) {
 	}
 }
 
-func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
+func (s *Skein1024) ProcessBlock(blk []byte, kw []uint64, blkCnt, byteCntAdd uint) {
 	const WCNT = SKEIN1024_STATE_WORDS
 
-	var kw [WCNT+4]uint64
+	//var kw [WCNT+4]uint6
 
 	var X00,X01,X02,X03,X04,X05,X06,X07,X08,X09,X10,X11,X12,X13,X14,X15 uint64
-	var w [WCNT]uint64
-
-	//IF SKEIN DEBUG
-	//INSERT DEBUG CODE HERE
-	//ENDIF
+	var w_ [WCNT]uint64
+	w := w_[:]
+	//w := make([]uint64, WCNT)
 
 	//ASSERT blkCnt != 0
-	ts := kw //TEMPORARY, JUST TO MAKE TRANSLATING EASIER
 	ks := kw[3:]
-	ts[0] = s.h.T[0]
-	ts[1] = s.h.T[1]
+	kw[0] = s.h.T[0]
+	kw[1] = s.h.T[1]
 
-	//DO WHILE LOOP
+	/*
 	if blkCnt == 0 {
+		fmt.Println("Is this ever called?")
 		blkCnt++
-	}
+	}*/
 
 	for ;blkCnt > 0; blkCnt-- {
-		ts[0] += uint64(byteCntAdd)
+		kw[0] += uint64(byteCntAdd)
 
 		ks[0] = s.X[0]
 		ks[1] = s.X[1]
@@ -157,10 +156,10 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		ks[15] = s.X[15]
 		ks[16] = ks[0] ^ ks[1] ^ ks[2] ^ ks[3] ^ ks[4] ^ ks[5] ^ ks[6] ^ ks[7] ^ ks[8] ^ ks[9] ^ ks[10] ^ ks[11] ^ ks[12] ^ ks[13] ^ ks[14] ^ ks[15] ^ ((0xA9FC1A22) + (( uint64(0x1BD11BDA)) << 32))
 
-		ts[2] = ts[0] ^ ts[1]
+		kw[2] = kw[0] ^ kw[1]
 
 		//copy(w[:], blk[:8*WCNT])
-		CopyBytesToInt64(w[:], blk[:8*WCNT])
+		CopyBytesToInt64(w, blk)
 
 		X00    = w[ 0] + ks[ 0]                 /* do the first full key injection */
 		X01    = w[ 1] + ks[ 1]
@@ -175,8 +174,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10    = w[10] + ks[10]
 		X11    = w[11] + ks[11]
 		X12    = w[12] + ks[12]
-		X13    = w[13] + ks[13] + ts[0]
-		X14    = w[14] + ks[14] + ts[1]
+		X13    = w[13] + ks[13] + kw[0]
+		X14    = w[14] + ks[14] + kw[1]
 		X15    = w[15] + ks[15]
 
 		ks[0] = s.X[0]
@@ -298,8 +297,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(0))+11) % 17]
 		X11 += ks[((2*(0))+12) % 17]
 		X12 += ks[((2*(0))+13) % 17]
-		X13 += ks[((2*(0))+14) % 17] + ts[((2*(0))+1) % 3]
-		X14 += ks[((2*(0))+15) % 17] + ts[((2*(0))+2) % 3]
+		X13 += ks[((2*(0))+14) % 17] + kw[((2*(0))+1) % 3]
+		X14 += ks[((2*(0))+15) % 17] + kw[((2*(0))+2) % 3]
 		X15 += ks[((2*(0))+16) % 17] + (2*(0))+1
 
 
@@ -420,8 +419,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(0)+1)+11) % 17]
 		X11 += ks[((2*(0)+1)+12) % 17]
 		X12 += ks[((2*(0)+1)+13) % 17]
-		X13 += ks[((2*(0)+1)+14) % 17] + ts[((2*(0)+1)+1) % 3]
-		X14 += ks[((2*(0)+1)+15) % 17] + ts[((2*(0)+1)+2) % 3]
+		X13 += ks[((2*(0)+1)+14) % 17] + kw[((2*(0)+1)+1) % 3]
+		X14 += ks[((2*(0)+1)+15) % 17] + kw[((2*(0)+1)+2) % 3]
 		X15 += ks[((2*(0)+1)+16) % 17] + (2*(0)+1)+1
 
 
@@ -548,8 +547,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(1))+11) % 17]
 		X11 += ks[((2*(1))+12) % 17]
 		X12 += ks[((2*(1))+13) % 17]
-		X13 += ks[((2*(1))+14) % 17] + ts[((2*(1))+1) % 3]
-		X14 += ks[((2*(1))+15) % 17] + ts[((2*(1))+2) % 3]
+		X13 += ks[((2*(1))+14) % 17] + kw[((2*(1))+1) % 3]
+		X14 += ks[((2*(1))+15) % 17] + kw[((2*(1))+2) % 3]
 		X15 += ks[((2*(1))+16) % 17] + (2*(1))+1
 
 
@@ -670,8 +669,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(1)+1)+11) % 17]
 		X11 += ks[((2*(1)+1)+12) % 17]
 		X12 += ks[((2*(1)+1)+13) % 17]
-		X13 += ks[((2*(1)+1)+14) % 17] + ts[((2*(1)+1)+1) % 3]
-		X14 += ks[((2*(1)+1)+15) % 17] + ts[((2*(1)+1)+2) % 3]
+		X13 += ks[((2*(1)+1)+14) % 17] + kw[((2*(1)+1)+1) % 3]
+		X14 += ks[((2*(1)+1)+15) % 17] + kw[((2*(1)+1)+2) % 3]
 		X15 += ks[((2*(1)+1)+16) % 17] + (2*(1)+1)+1
 
 
@@ -796,8 +795,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(2))+11) % 17]
 		X11 += ks[((2*(2))+12) % 17]
 		X12 += ks[((2*(2))+13) % 17]
-		X13 += ks[((2*(2))+14) % 17] + ts[((2*(2))+1) % 3]
-		X14 += ks[((2*(2))+15) % 17] + ts[((2*(2))+2) % 3]
+		X13 += ks[((2*(2))+14) % 17] + kw[((2*(2))+1) % 3]
+		X14 += ks[((2*(2))+15) % 17] + kw[((2*(2))+2) % 3]
 		X15 += ks[((2*(2))+16) % 17] + (2*(2))+1
 
 
@@ -918,8 +917,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(2)+1)+11) % 17]
 		X11 += ks[((2*(2)+1)+12) % 17]
 		X12 += ks[((2*(2)+1)+13) % 17]
-		X13 += ks[((2*(2)+1)+14) % 17] + ts[((2*(2)+1)+1) % 3]
-		X14 += ks[((2*(2)+1)+15) % 17] + ts[((2*(2)+1)+2) % 3]
+		X13 += ks[((2*(2)+1)+14) % 17] + kw[((2*(2)+1)+1) % 3]
+		X14 += ks[((2*(2)+1)+15) % 17] + kw[((2*(2)+1)+2) % 3]
 		X15 += ks[((2*(2)+1)+16) % 17] + (2*(2)+1)+1
 
 
@@ -1044,8 +1043,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(3))+11) % 17]
 		X11 += ks[((2*(3))+12) % 17]
 		X12 += ks[((2*(3))+13) % 17]
-		X13 += ks[((2*(3))+14) % 17] + ts[((2*(3))+1) % 3]
-		X14 += ks[((2*(3))+15) % 17] + ts[((2*(3))+2) % 3]
+		X13 += ks[((2*(3))+14) % 17] + kw[((2*(3))+1) % 3]
+		X14 += ks[((2*(3))+15) % 17] + kw[((2*(3))+2) % 3]
 		X15 += ks[((2*(3))+16) % 17] + (2*(3))+1
 
 
@@ -1166,8 +1165,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(3)+1)+11) % 17]
 		X11 += ks[((2*(3)+1)+12) % 17]
 		X12 += ks[((2*(3)+1)+13) % 17]
-		X13 += ks[((2*(3)+1)+14) % 17] + ts[((2*(3)+1)+1) % 3]
-		X14 += ks[((2*(3)+1)+15) % 17] + ts[((2*(3)+1)+2) % 3]
+		X13 += ks[((2*(3)+1)+14) % 17] + kw[((2*(3)+1)+1) % 3]
+		X14 += ks[((2*(3)+1)+15) % 17] + kw[((2*(3)+1)+2) % 3]
 		X15 += ks[((2*(3)+1)+16) % 17] + (2*(3)+1)+1
 
 
@@ -1292,8 +1291,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(4))+11) % 17]
 		X11 += ks[((2*(4))+12) % 17]
 		X12 += ks[((2*(4))+13) % 17]
-		X13 += ks[((2*(4))+14) % 17] + ts[((2*(4))+1) % 3]
-		X14 += ks[((2*(4))+15) % 17] + ts[((2*(4))+2) % 3]
+		X13 += ks[((2*(4))+14) % 17] + kw[((2*(4))+1) % 3]
+		X14 += ks[((2*(4))+15) % 17] + kw[((2*(4))+2) % 3]
 		X15 += ks[((2*(4))+16) % 17] + (2*(4))+1
 
 
@@ -1414,8 +1413,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(4)+1)+11) % 17]
 		X11 += ks[((2*(4)+1)+12) % 17]
 		X12 += ks[((2*(4)+1)+13) % 17]
-		X13 += ks[((2*(4)+1)+14) % 17] + ts[((2*(4)+1)+1) % 3]
-		X14 += ks[((2*(4)+1)+15) % 17] + ts[((2*(4)+1)+2) % 3]
+		X13 += ks[((2*(4)+1)+14) % 17] + kw[((2*(4)+1)+1) % 3]
+		X14 += ks[((2*(4)+1)+15) % 17] + kw[((2*(4)+1)+2) % 3]
 		X15 += ks[((2*(4)+1)+16) % 17] + (2*(4)+1)+1
 
 
@@ -1540,8 +1539,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(5))+11) % 17]
 		X11 += ks[((2*(5))+12) % 17]
 		X12 += ks[((2*(5))+13) % 17]
-		X13 += ks[((2*(5))+14) % 17] + ts[((2*(5))+1) % 3]
-		X14 += ks[((2*(5))+15) % 17] + ts[((2*(5))+2) % 3]
+		X13 += ks[((2*(5))+14) % 17] + kw[((2*(5))+1) % 3]
+		X14 += ks[((2*(5))+15) % 17] + kw[((2*(5))+2) % 3]
 		X15 += ks[((2*(5))+16) % 17] + (2*(5))+1
 
 
@@ -1662,8 +1661,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(5)+1)+11) % 17]
 		X11 += ks[((2*(5)+1)+12) % 17]
 		X12 += ks[((2*(5)+1)+13) % 17]
-		X13 += ks[((2*(5)+1)+14) % 17] + ts[((2*(5)+1)+1) % 3]
-		X14 += ks[((2*(5)+1)+15) % 17] + ts[((2*(5)+1)+2) % 3]
+		X13 += ks[((2*(5)+1)+14) % 17] + kw[((2*(5)+1)+1) % 3]
+		X14 += ks[((2*(5)+1)+15) % 17] + kw[((2*(5)+1)+2) % 3]
 		X15 += ks[((2*(5)+1)+16) % 17] + (2*(5)+1)+1
 
 
@@ -1788,8 +1787,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(6))+11) % 17]
 		X11 += ks[((2*(6))+12) % 17]
 		X12 += ks[((2*(6))+13) % 17]
-		X13 += ks[((2*(6))+14) % 17] + ts[((2*(6))+1) % 3]
-		X14 += ks[((2*(6))+15) % 17] + ts[((2*(6))+2) % 3]
+		X13 += ks[((2*(6))+14) % 17] + kw[((2*(6))+1) % 3]
+		X14 += ks[((2*(6))+15) % 17] + kw[((2*(6))+2) % 3]
 		X15 += ks[((2*(6))+16) % 17] + (2*(6))+1
 
 
@@ -1910,8 +1909,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(6)+1)+11) % 17]
 		X11 += ks[((2*(6)+1)+12) % 17]
 		X12 += ks[((2*(6)+1)+13) % 17]
-		X13 += ks[((2*(6)+1)+14) % 17] + ts[((2*(6)+1)+1) % 3]
-		X14 += ks[((2*(6)+1)+15) % 17] + ts[((2*(6)+1)+2) % 3]
+		X13 += ks[((2*(6)+1)+14) % 17] + kw[((2*(6)+1)+1) % 3]
+		X14 += ks[((2*(6)+1)+15) % 17] + kw[((2*(6)+1)+2) % 3]
 		X15 += ks[((2*(6)+1)+16) % 17] + (2*(6)+1)+1
 
 
@@ -2036,8 +2035,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(7))+11) % 17]
 		X11 += ks[((2*(7))+12) % 17]
 		X12 += ks[((2*(7))+13) % 17]
-		X13 += ks[((2*(7))+14) % 17] + ts[((2*(7))+1) % 3]
-		X14 += ks[((2*(7))+15) % 17] + ts[((2*(7))+2) % 3]
+		X13 += ks[((2*(7))+14) % 17] + kw[((2*(7))+1) % 3]
+		X14 += ks[((2*(7))+15) % 17] + kw[((2*(7))+2) % 3]
 		X15 += ks[((2*(7))+16) % 17] + (2*(7))+1
 
 
@@ -2158,8 +2157,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(7)+1)+11) % 17]
 		X11 += ks[((2*(7)+1)+12) % 17]
 		X12 += ks[((2*(7)+1)+13) % 17]
-		X13 += ks[((2*(7)+1)+14) % 17] + ts[((2*(7)+1)+1) % 3]
-		X14 += ks[((2*(7)+1)+15) % 17] + ts[((2*(7)+1)+2) % 3]
+		X13 += ks[((2*(7)+1)+14) % 17] + kw[((2*(7)+1)+1) % 3]
+		X14 += ks[((2*(7)+1)+15) % 17] + kw[((2*(7)+1)+2) % 3]
 		X15 += ks[((2*(7)+1)+16) % 17] + (2*(7)+1)+1
 
 
@@ -2284,8 +2283,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(8))+11) % 17]
 		X11 += ks[((2*(8))+12) % 17]
 		X12 += ks[((2*(8))+13) % 17]
-		X13 += ks[((2*(8))+14) % 17] + ts[((2*(8))+1) % 3]
-		X14 += ks[((2*(8))+15) % 17] + ts[((2*(8))+2) % 3]
+		X13 += ks[((2*(8))+14) % 17] + kw[((2*(8))+1) % 3]
+		X14 += ks[((2*(8))+15) % 17] + kw[((2*(8))+2) % 3]
 		X15 += ks[((2*(8))+16) % 17] + (2*(8))+1
 
 
@@ -2406,8 +2405,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(8)+1)+11) % 17]
 		X11 += ks[((2*(8)+1)+12) % 17]
 		X12 += ks[((2*(8)+1)+13) % 17]
-		X13 += ks[((2*(8)+1)+14) % 17] + ts[((2*(8)+1)+1) % 3]
-		X14 += ks[((2*(8)+1)+15) % 17] + ts[((2*(8)+1)+2) % 3]
+		X13 += ks[((2*(8)+1)+14) % 17] + kw[((2*(8)+1)+1) % 3]
+		X14 += ks[((2*(8)+1)+15) % 17] + kw[((2*(8)+1)+2) % 3]
 		X15 += ks[((2*(8)+1)+16) % 17] + (2*(8)+1)+1
 
 
@@ -2532,8 +2531,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(9))+11) % 17]
 		X11 += ks[((2*(9))+12) % 17]
 		X12 += ks[((2*(9))+13) % 17]
-		X13 += ks[((2*(9))+14) % 17] + ts[((2*(9))+1) % 3]
-		X14 += ks[((2*(9))+15) % 17] + ts[((2*(9))+2) % 3]
+		X13 += ks[((2*(9))+14) % 17] + kw[((2*(9))+1) % 3]
+		X14 += ks[((2*(9))+15) % 17] + kw[((2*(9))+2) % 3]
 		X15 += ks[((2*(9))+16) % 17] + (2*(9))+1
 
 
@@ -2654,8 +2653,8 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		X10 += ks[((2*(9)+1)+11) % 17]
 		X11 += ks[((2*(9)+1)+12) % 17]
 		X12 += ks[((2*(9)+1)+13) % 17]
-		X13 += ks[((2*(9)+1)+14) % 17] + ts[((2*(9)+1)+1) % 3]
-		X14 += ks[((2*(9)+1)+15) % 17] + ts[((2*(9)+1)+2) % 3]
+		X13 += ks[((2*(9)+1)+14) % 17] + kw[((2*(9)+1)+1) % 3]
+		X14 += ks[((2*(9)+1)+15) % 17] + kw[((2*(9)+1)+2) % 3]
 		X15 += ks[((2*(9)+1)+16) % 17] + (2*(9)+1)+1
 
 		s.X[ 0] = X00 ^ w[ 0]
@@ -2675,19 +2674,16 @@ func (s *Skein1024) ProcessBlock(blk []byte, blkCnt, byteCntAdd uint) {
 		s.X[14] = X14 ^ w[14]
 		s.X[15] = X15 ^ w[15]
 
-		ts[1] &= ^(uint64( 1 ) << ((126) - 64))
+		kw[1] &= ^(uint64( 1 ) << ((126) - 64))
 
 		//blkPtr += ( 8*(16))
 		blk = blk[8*16:]
 
 	}
 
-	s.h.T[0] = ts[0]
-	s.h.T[1] = ts[1]
+	s.h.T[0] = kw[0]
+	s.h.T[1] = kw[1]
 
 }
 
 
-func Skein_Put64_LSB_First(dst []byte, src []uint64) {
-	//I think this function might be unnecessary...
-}
