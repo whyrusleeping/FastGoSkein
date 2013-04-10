@@ -1,7 +1,8 @@
-package skein
+package main
 
 import (
 	"encoding/binary"
+	"unsafe"
 )
 
 type CtxtHeader struct {
@@ -100,14 +101,21 @@ func (s *Skein1024) Final(outp []byte) {
 }
 
 func CopyInt64ToBytes(dest []byte, src []uint64) {
+	up := (*[]uint64)(unsafe.Pointer(&dest))
 	for i := 0; i < len(src); i++ {
-		binary.LittleEndian.PutUint64(dest[i * 8:], src[i])
+		//binary.LittleEndian.PutUint64(dest[i * 8:], src[i])
+		(*up)[i] = src[i]
 	}
 }
 
 func CopyBytesToInt64(dest []uint64, src []byte) {
-	for i := 0; i < len(dest); i++ {
-		dest[i] = binary.LittleEndian.Uint64(src[i*8:])
+	//var loc uint
+	up := (*[]uint64)(unsafe.Pointer(&src))
+	for i := uint(0); i < uint(len(dest)); i++ {
+		dest[i] = (*up)[i]
+		//loc = i << 3
+		//dest[i] = binary.LittleEndian.Uint64(src[i*8:])
+		//dest[i] = uint64(src[loc]) + uint64(src[loc + 1] << loc) + uint64(src[loc + 2] << 16) + uint64(src[loc + 3] << 24) + uint64(src[loc + 4] << 32) + uint64(src[loc + 5] << 40) + uint64(src[loc + 6] << 4) + uint64(src[loc + 7] << 56)
 	}
 }
 
