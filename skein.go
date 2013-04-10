@@ -1,9 +1,8 @@
-package main
+package skein
 
 import (
 	"encoding/binary"
 	"unsafe"
-	"fmt"
 )
 
 type CtxtHeader struct {
@@ -109,7 +108,7 @@ func CopyInt64ToBytes(dest []byte, src []uint64) {
 
 func CopyBytesToInt64(dest []uint64, src []byte) {
 	up := (*[]uint64)(unsafe.Pointer(&src))
-	for i := uint(0); i < uint(len(dest)); i++ {
+	for i := uint(0); i < uint(len(src) / 8); i++ {
 		dest[i] = (*up)[i]
 	}
 }

@@ -1,4 +1,4 @@
-package main
+package skein
 
 var SKEIN1024_IV_384 = []uint64{
     0x5102B6B8C1894A35,
