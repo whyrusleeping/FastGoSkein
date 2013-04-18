@@ -16,7 +16,7 @@ Import it in your golang code
 
 And use it!
 
-    toHash := []byte("This is a super secret message to be hashed!")
+    toHash := []byte("This is a super secret keyphrase to be hashed!")
     sk := new(skein.Skein1024)
     sk.Init(1024)
     sk.Update(toHash)
