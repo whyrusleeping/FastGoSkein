@@ -1,8 +1,7 @@
 FastGoSkein
 ===========
 
-A go port of the skein hash function originally written in C from https://github.com/cberner/xkcd_
-miner. Ive made a few tweaks an optimizations on the original code for added performance.
+A go port of the skein hash function originally written in C from https://github.com/cberner/xkcd_miner. Ive made a few tweaks an optimizations on the original code for added performance.
 Note: Its still not as fast as the original, but I will continue to chip away at optimizations as much as I can!
 
 #Use:
